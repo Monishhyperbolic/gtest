@@ -1,3 +1,5 @@
+import os  
+import dj_database_url  
 """
 Django settings for filesharing project.
 
@@ -126,7 +128,20 @@ MEDIA_ROOT = BASE_DIR/'static'/'media'
 # https://docs.djangoproject.com/en/4.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-ALLOWED_HOSTS = ['*']  
-STATIC_URL = '/static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
+
+DEBUG = False  
+ALLOWED_HOSTS = ['your-app-name.onrender.com', 'localhost', '127.0.0.1']  
+
+# Database (Render provides DATABASE_URL)  
+DATABASES = {  
+    'default': dj_database_url.config(  
+        default=os.getenv('DATABASE_URL'),  
+        conn_max_age=600,  
+        ssl_require=True  
+    )  
+}  
+
+# Static files (Render uses WhiteNoise)  
+STATIC_URL = '/static/'  
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')  
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'  
