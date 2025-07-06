@@ -1,5 +1,15 @@
 import os  
 import dj_database_url  
+import dj_database_url
+
+DATABASES = {
+    'default': dj_database_url.config(
+        default='sqlite:///db.sqlite3',  # Fallback to SQLite
+        conn_max_age=600,
+        ssl_require=True
+    )
+}
+DATABASES['default']['ENGINE'] = 'django.db.backends.postgresql'
 """
 Django settings for filesharing project.
 
@@ -145,3 +155,6 @@ DATABASES = {
 STATIC_URL = '/static/'  
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')  
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'  
+if 'RENDER' in os.environ:
+    import dj_database_url
+    DATABASES['default'] = dj_database_url.config(conn_max_age=600, ssl_require=True)
