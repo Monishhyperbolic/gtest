@@ -1,13 +1,27 @@
 from flask import Flask, request, send_file, render_template_string
 from werkzeug.utils import secure_filename
+import sqlite3
 import os
 from io import BytesIO
 from datetime import datetime, timedelta
+import uuid
 
 app = Flask(__name__)
 
-# In-memory storage for files (use a database or filesystem for production)
-files_storage = {}
+# Initialize SQLite database
+def init_db():
+    conn = sqlite3.connect('files.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS files (
+                    id TEXT PRIMARY KEY,
+                    filename TEXT NOT NULL,
+                    content BLOB NOT NULL,
+                    upload_time TIMESTAMP NOT NULL
+                )''')
+    conn.commit()
+    conn.close()
+
+init_db()
 
 # HTML template for the web interface
 HTML_TEMPLATE = '''
@@ -37,10 +51,10 @@ HTML_TEMPLATE = '''
         <h2>Uploaded Files</h2>
         <div class="file-list">
             {% if files %}
-                {% for file_id, file_info in files.items() %}
+                {% for file in files %}
                     <div class="file-item">
-                        <a href="/download/{{ file_id }}">{{ file_info['name'] }}</a>
-                        <span>(Uploaded: {{ file_info['time'] }})</span>
+                        <a href="/download/{{ file[0] }}">{{ file[1] }}</a>
+                        <span>(Uploaded: {{ file[3] }})</span>
                     </div>
                 {% endfor %}
             {% else %}
@@ -55,49 +69,83 @@ HTML_TEMPLATE = '''
 @app.route('/')
 def index():
     # Clean up expired files (older than 1 hour)
-    current_time = datetime.utcnow()
-    expired = [fid for fid, finfo in files_storage.items() 
-              if current_time - finfo['time'] > timedelta(hours=1)]
-    for fid in expired:
-        del files_storage[fid]
+    conn = sqlite3.connect('files.db')
+    c = conn.cursor()
+    expiration_time = datetime.utcnow() - timedelta(hours=1)
+    c.execute("DELETE FROM files WHERE upload_time < ?", (expiration_time,))
+    conn.commit()
     
-    return render_template_string(HTML_TEMPLATE, files=files_storage)
+    # Fetch remaining files
+    c.execute("SELECT id, filename, content, upload_time FROM files")
+    files = c.fetchall()
+    conn.close()
+    
+    return render_template_string(HTML_TEMPLATE, files=files)
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
-        return render_template_string(HTML_TEMPLATE, files=files_storage, 
+        conn = sqlite3.connect('files.db')
+        c = conn.cursor()
+        c.execute("SELECT id, filename, content, upload_time FROM files")
+        files = c.fetchall()
+        conn.close()
+        return render_template_string(HTML_TEMPLATE, files=files, 
                                    message="No file selected", error=True)
     
     file = request.files['file']
     if file.filename == '':
-        return render_template_string(HTML_TEMPLATE, files=files_storage, 
+        conn = sqlite3.connect('files.db')
+        c = conn.cursor()
+        c.execute("SELECT id, filename, content, upload_time FROM files")
+        files = c.fetchall()
+        conn.close()
+        return render_template_string(HTML_TEMPLATE, files=files, 
                                    message="No file selected", error=True)
     
     if file:
         filename = secure_filename(file.filename)
-        file_id = str(hash(filename + str(datetime.utcnow())))
+        file_id = str(uuid.uuid4())
         file_content = file.read()
-        files_storage[file_id] = {
-            'name': filename,
-            'content': file_content,
-            'time': datetime.utcnow()
-        }
-        return render_template_string(HTML_TEMPLATE, files=files_storage, 
+        upload_time = datetime.utcnow()
+        
+        conn = sqlite3.connect('files.db')
+        c = conn.cursor()
+        c.execute("INSERT INTO files (id, filename, content, upload_time) VALUES (?, ?, ?, ?)",
+                 (file_id, filename, file_content, upload_time))
+        conn.commit()
+        conn.close()
+        
+        c.execute("SELECT id, filename, content, upload_time FROM files")
+        files = c.fetchall()
+        conn.close()
+        
+        return render_template_string(HTML_TEMPLATE, files=files, 
                                    message=f"File {filename} uploaded successfully")
 
 @app.route('/download/<file_id>')
 def download_file(file_id):
-    if file_id not in files_storage:
-        return render_template_string(HTML_TEMPLATE, files=files_storage, 
+    conn = sqlite3.connect('files.db')
+    c = conn.cursor()
+    c.execute("SELECT filename, content FROM files WHERE id = ?", (file_id,))
+    file_data = c.fetchone()
+    conn.close()
+    
+    if not file_data:
+        conn = sqlite3.connect('files.db')
+        c = conn.cursor()
+        c.execute("SELECT id, filename, content, upload_time FROM files")
+        files = c.fetchall()
+        conn.close()
+        return render_template_string(HTML_TEMPLATE, files=files, 
                                    message="File not found", error=True)
     
-    file_info = files_storage[file_id]
+    filename, content = file_data
     return send_file(
-        BytesIO(file_info['content']),
-        download_name=file_info['name'],
+        BytesIO(content),
+        download_name=filename,
         as_attachment=True
     )
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
